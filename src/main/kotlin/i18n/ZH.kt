@@ -30,5 +30,4 @@ https://exam.kernelsu.org/?pwd=[PASSWORD]
     correct = "密码正确！",
     incorrect = "密码错误！",
     usage = "使用方法: /join [密码]",
-    notFound = "未找到你的进群申请"
 )

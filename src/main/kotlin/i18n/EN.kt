@@ -30,5 +30,4 @@ And the invitation will be approved automatically!
     correct = "Correct Password!",
     incorrect = "Incorrect Password!",
     usage = "Usage: /join [password]",
-    notFound = "JoinRequest not found"
 )

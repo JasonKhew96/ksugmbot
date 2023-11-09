@@ -6,7 +6,6 @@ data class Model(
     val correct : String,
     val incorrect: String,
     val usage: String,
-    val notFound: String
 )
 
 val allLang = arrayOf(

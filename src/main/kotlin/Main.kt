@@ -1,4 +1,5 @@
 import dev.inmo.tgbotapi.extensions.api.chat.invite_links.approveChatJoinRequest
+import dev.inmo.tgbotapi.extensions.api.chat.invite_links.declineChatJoinRequest
 import dev.inmo.tgbotapi.extensions.api.send.sendMessage
 import dev.inmo.tgbotapi.extensions.behaviour_builder.telegramBotWithBehaviourAndLongPolling
 import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onChatJoinRequest
@@ -6,24 +7,12 @@ import dev.inmo.tgbotapi.extensions.behaviour_builder.triggers_handling.onComman
 import dev.inmo.tgbotapi.extensions.utils.asCommonUser
 import dev.inmo.tgbotapi.extensions.utils.asPrivateChat
 import dev.inmo.tgbotapi.extensions.utils.extensions.raw.from
-import dev.inmo.tgbotapi.types.ChatIdentifier
+import dev.inmo.tgbotapi.types.ChatId
 import i18n.getModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import java.util.*
-import kotlin.collections.HashMap
-import kotlin.math.absoluteValue
-import kotlin.random.Random
-import MaxSizeHashMap
-
-/**
- * This is one of the most easiest bot - it will just print information about itself
- */
-
-data class JoinRequest(
-    val identifier: ChatIdentifier,
-    val password: String,
-)
+import kotlin.math.abs
 
 /**
  * XXTEA.kt comes from https://github.com/xJoeWoo/xxtea-kotlin
@@ -188,9 +177,19 @@ object XXTEA {
     }
 }
 
-suspend fun main(vararg args: String) {
-    val map = MaxSizeHashMap<ChatIdentifier, JoinRequest>(128)
+/*
+ * Taken from http://www.miguelsanmiguel.com/2011/04/03/hideous-obfuscated-ids
+ */
+object PrimeEncoder {
+    private const val PRIME = 253579998419723143L
+    private const val PRIME_REVERSE = 1436574376327426615L
 
+    fun encode(input: Long): Long = (input * PRIME) and Long.MAX_VALUE
+
+    fun decode(input: Long): Long = (input * PRIME_REVERSE) and Long.MAX_VALUE
+}
+
+suspend fun main(vararg args: String) {
     if (args.size != 1){
         println("Invalid BotToken")
         return
@@ -200,19 +199,13 @@ suspend fun main(vararg args: String) {
 
     telegramBotWithBehaviourAndLongPolling(args[0], CoroutineScope(Dispatchers.IO)) {
         onChatJoinRequest {
-            val model = getModel(it.from?.asCommonUser()?.ietfLanguageCode?.code)
-            val passwordLength = (it.chat.id.chatId).absoluteValue.toString().length
-            var start: Long = 1;
-            for (i in 1..passwordLength-1) {
-                start *= 10;
-            }
-            val password = Random.nextLong(start, (start * 10) - 1).toString()
+            val model = getModel(it.from.asCommonUser()?.ietfLanguageCode?.code)
+            val password = "${PrimeEncoder.encode(abs(it.chat.id.chatId))}|${PrimeEncoder.encode(it.from.id.chatId)}"
             val secret = "20221209"
-            val fakepassword = XXTEA.encrypt(password, secret)
-            val encodedPassword: String = Base64.getEncoder().encodeToString(fakepassword)
+            val fakePassword = XXTEA.encrypt(password, secret)
+            val encodedPassword: String = Base64.getEncoder().encodeToString(fakePassword)
             bot.sendMessage(it.from.id, model.problem.replace("[PASSWORD]", encodedPassword))
-            map[it.from.id] = JoinRequest(it.chat.id, password)
-            println("user ${it.from.id} start joining ${it.chat.id}, map size: ${map.size}")
+            println("user ${it.from.id} request to join ${it.chat.id}")
         }
         onCommandWithArgs("join") { it, args ->
             val user = it.chat.asPrivateChat()!!
@@ -222,20 +215,28 @@ suspend fun main(vararg args: String) {
                 bot.sendMessage(user.id, model.usage)
                 return@onCommandWithArgs
             }
-            if (map.containsKey(user.id)){
-                val req = map[user.id]!!
-                if (args[0] == req.password){
-                    bot.approveChatJoinRequest(req.identifier, user.id)
-                    bot.sendMessage(it.chat, model.correct)
-                    println("user ${user.id} joined ${req.identifier}")
-                    map.remove(user.id)
-                }else{
-                    bot.sendMessage(user.id, model.incorrect)
-                    println("user ${user.id} join ${req.identifier} failed")
-                }
-            }else {
-                println("user ${user.id} not found group")
-                bot.sendMessage(user.id, model.notFound)
+            val answer = args[0]
+            val splits = answer.split("|")
+            if (splits.size != 2) {
+                bot.sendMessage(user.id, model.usage)
+                return@onCommandWithArgs
+            }
+            val chatId = try {
+                -PrimeEncoder.decode(splits[0].toLong())
+            } catch (_: Throwable) {
+                bot.sendMessage(user.id, model.usage)
+                return@onCommandWithArgs
+            }
+            val password = splits[1]
+            val expectedPassword = PrimeEncoder.encode(user.id.chatId).toString()
+            if (expectedPassword == password) {
+                bot.approveChatJoinRequest(ChatId(chatId), user.id)
+                bot.sendMessage(it.chat, model.correct)
+                println("user ${user.id} joined $chatId")
+            } else {
+                bot.declineChatJoinRequest(ChatId(chatId), user.id)
+                bot.sendMessage(user.id, model.incorrect)
+                println("user ${user.id} join $chatId failed")
             }
         }
     }.second.join()
